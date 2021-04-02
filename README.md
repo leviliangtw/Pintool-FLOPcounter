@@ -37,8 +37,8 @@ This application is instrumented by MyPinTool
 [INFOS] Image Name: libm.so.6, -1
 ###############################################
 A(6x6) multiply by B(6x6): 
-multiplyMatrix:       4611.02ms
-multiplySparseMatrix: 8669.85ms
+multiplyMatrix:       4329.92ms
+multiplySparseMatrix: 8181.1ms
 ###############################################
 ===============================================
               The Analysis Result              
@@ -49,11 +49,11 @@ Address:             0x403f30
 Calls:                        1
 Instructions counts:       1022
 FLOP counts (TODO):           0
-FLOP instructions:   
-     XED_IFORM                XED_ICLASS   XED_CAT   XED_EXT    is_FMA    counts      #opd     opd_1/type       #elements     opd_2/type       #elements     opd_3/type       #elements
-     ADDSD_XMMsd_MEMsd             ADDSD       SSE      SSE2         0        17         2        64/DOUBLE             1        64/DOUBLE             1
-     MULSD_XMMsd_MEMsd             MULSD       SSE      SSE2         0        17         2        64/DOUBLE             1        64/DOUBLE             1
-     UCOMISD_XMMsd_XMMsd         UCOMISD       SSE      SSE2         0        36         3        64/DOUBLE             1        64/DOUBLE             1        32/INT                1
+FLOP instructions: 
+     XED_IFORM                   XED_CAT  XED_EXT  counts  FMA  Scalar_SIMD  Mask_OP  #opd  opd1(bit/type/elm)  opd2(bit/type/elm)  opd3(bit/type/elm)
+     ADDSD_XMMsd_MEMsd               SSE     SSE2      17    0            1        0     2         64/DOUBLE/1         64/DOUBLE/1
+     MULSD_XMMsd_MEMsd               SSE     SSE2      17    0            1        0     2         64/DOUBLE/1         64/DOUBLE/1
+     UCOMISD_XMMsd_XMMsd             SSE     SSE2      36    0            1        0     3         64/DOUBLE/1         64/DOUBLE/1            32/INT/1
 
 Routine (Procedure): _Z14multiplyMatrixPPdPiS1_S0_S1_S1_S0_S1_S1_
 Image:               matrix_multiplications.exe
@@ -68,10 +68,10 @@ Address:             0x403510
 Calls:                        1
 Instructions counts:       2409
 FLOP counts (TODO):           0
-FLOP instructions:   
-     XED_IFORM                XED_ICLASS   XED_CAT   XED_EXT    is_FMA    counts      #opd     opd_1/type       #elements     opd_2/type       #elements     opd_3/type       #elements
-     ADDSD_XMMsd_XMMsd             ADDSD       SSE      SSE2         0       216         2        64/DOUBLE             1        64/DOUBLE             1
-     MULSD_XMMsd_MEMsd             MULSD       SSE      SSE2         0       216         2        64/DOUBLE             1        64/DOUBLE             1
+FLOP instructions: 
+     XED_IFORM                   XED_CAT  XED_EXT  counts  FMA  Scalar_SIMD  Mask_OP  #opd  opd1(bit/type/elm)  opd2(bit/type/elm)  opd3(bit/type/elm)
+     ADDSD_XMMsd_XMMsd               SSE     SSE2     216    0            1        0     2         64/DOUBLE/1         64/DOUBLE/1
+     MULSD_XMMsd_MEMsd               SSE     SSE2     216    0            1        0     2         64/DOUBLE/1         64/DOUBLE/1
 
 Routine (Procedure): _Z20multiplySparseMatrixP9cs_sparseS0_S0_.cold
 Image:               matrix_multiplications.exe
@@ -86,7 +86,6 @@ Address:             0x402450
 Calls:                        0
 Instructions counts:          0
 FLOP counts (TODO):           0
-
 ```
 
 ## TODO
