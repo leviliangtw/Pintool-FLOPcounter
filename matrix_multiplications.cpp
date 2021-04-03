@@ -10,8 +10,18 @@ $ valgrind --tool=memcheck --leak-check=full -s ./obj-intel64/sparse_matrix.exe
 #include <sstream>
 #include <string.h>
 #include <sys/time.h>
+#include <cassert>
+#include<pthread.h>
 
 using namespace std;
+
+////////////////////////////////////////////////////////////////////////////
+// DEFINES
+////////////////////////////////////////////////////////////////////////////
+
+////////////////////////////////////////////////////////////////////////////
+// TYPES
+////////////////////////////////////////////////////////////////////////////
 
 /* --- primary CSparse routines and data structures --- */
 typedef struct cs_sparse    /* matrix in compressed-column or triplet form */
@@ -25,6 +35,12 @@ typedef struct cs_sparse    /* matrix in compressed-column or triplet form */
     int nz ;        /* # of entries in triplet matrix, -1 for compressed-col */
 } cs ;
 
+////////////////////////////////////////////////////////////////////////////
+// PROTOTYPES
+////////////////////////////////////////////////////////////////////////////
+
+int main(int, char *[]);
+void *child(void *);
 void print_matrix(double **, int, int);
 void print_sparse_matrix(cs *, int);
 void trans2SparseMatrix(double **, int, int, cs *);
@@ -32,16 +48,171 @@ void multiplyMatrix(double **, int *, int *, double **, int *, int *, double **,
 void multiplySparseMatrix(cs *, cs *, cs *);
 double wtime();
 
+////////////////////////////////////////////////////////////////////////////
+// GLOBALS
+////////////////////////////////////////////////////////////////////////////
+
+pthread_mutex_t mutex;
+
+////////////////////////////////////////////////////////////////////////////
+// INPLEMENTATIONS
+////////////////////////////////////////////////////////////////////////////
+
 int main(int argc, char *argv[]) {
+
+    pthread_attr_t attr;
+    int nthreads = (argc==2) ? atoi(argv[1]) : 4;
+    pthread_t* thread = new pthread_t[nthreads];
+    int r;
+    r = pthread_mutex_init(&mutex, 0);
+    assert(r==0);
+    r = pthread_attr_init(&attr);
+    assert(r==0);
+    for(int i=0;i<nthreads;i++) {
+        r = pthread_create( thread+i,
+                            &attr,
+                            child,
+                            argv );
+        assert(r==0);
+    }
 
     string str = "";
     stringstream ss;
     ifstream fileA, fileB;
 
     double my_default_matrix[4][4] = {{1, 2, 0, 0},
-                                        {7, 0, 0, 4},
-                                        {0, 0, 0, 1},
-                                        {0, 9, 8, 1}};
+                                      {7, 0, 0, 4},
+                                      {0, 0, 0, 1},
+                                      {0, 9, 8, 1}};
+    int Ar=4, Ac=4, Br=4, Bc=4;
+
+    fileA.open("matrixA.txt", ios::in);
+    fileB.open("matrixB.txt", ios::in);
+
+    if(fileA.is_open()) {
+        getline(fileA, str);
+        ss.clear(); ss << str; ss >> Ar; ss >> Ac;
+    }
+
+    if(fileB.is_open()) {
+        getline(fileB, str);
+        ss.clear(); ss << str; ss >> Br; ss >> Bc;
+    }
+
+    double matrixA[Ar][Ac], matrixB[Br][Bc];
+    double *p_matrixA[Ar], *p_matrixB[Br];
+    int Ai=0, Bi=0;
+
+    if(fileA.is_open()) {
+        while(!fileA.eof()) {
+            getline(fileA, str); 
+            ss.clear(); ss << str;
+            for(int i=0; i<Ac; i++) ss >> matrixA[Ai][i];
+            Ai++;
+        }
+        for(int i=0; i<Ar; i++) p_matrixA[i] = &matrixA[i][0];
+    }
+    else {
+        for(int i=0; i<Ar; i++) p_matrixA[i] = &my_default_matrix[i][0];
+    }
+
+    if(fileB.is_open()) {
+        while(!fileB.eof()) {
+            getline(fileB, str); 
+            ss.clear(); ss << str;
+            for(int i=0; i<Ac; i++) ss >> matrixB[Bi][i];
+            Bi++;
+        }
+        for(int i=0; i<Br; i++) p_matrixB[i] = &matrixB[i][0];
+    }
+    else {
+        for(int i=0; i<Br; i++) p_matrixB[i] = &my_default_matrix[i][0];
+    }
+
+    // print_matrix(p_matrixA, Ar, Ac);
+    // print_matrix(p_matrixB, Br, Bc);
+
+    fileA.close();
+    fileB.close();
+
+    cs sparse_matrixA, sparse_matrixB, sparse_matrixC;
+    int Cr=Ar, Cc=Bc;
+    double ** p_matrix_c = new double *[Cr];
+    trans2SparseMatrix(p_matrixA, Ar, Ac, &sparse_matrixA);
+    trans2SparseMatrix(p_matrixB, Br, Bc, &sparse_matrixB);
+
+    r = pthread_mutex_lock(&mutex);
+    assert(r==0);
+
+    double t0, t1, t2;
+    t0 = wtime();
+    multiplyMatrix(p_matrixA, &Ar, &Ac, p_matrixB, &Br, &Bc, p_matrix_c, &Cr, &Cc);
+    t1 = wtime();
+    multiplySparseMatrix(&sparse_matrixA, &sparse_matrixB, &sparse_matrixC);
+    t2 = wtime();
+    multiplyMatrix(p_matrixA, &Ar, &Ac, p_matrixB, &Br, &Bc, p_matrix_c, &Cr, &Cc);
+    multiplySparseMatrix(&sparse_matrixA, &sparse_matrixB, &sparse_matrixC);
+
+    // print_sparse_matrix(&sparse_matrixC, 0);
+    // print_matrix(p_matrix_c, Cr, Cc);
+
+    cout << "###############################################" << endl;
+    cout << "Mother" << endl;
+    cout << "###############################################" << endl;
+    cout << "A(" << Ar << "x" << Ac << ") multiply by B(" << Br << "x" << Bc << "): " << endl;
+    cout << "multiplyMatrix:       " << 1e6 * (t1 - t0) << "ms" << endl;
+    cout << "multiplySparseMatrix: " << 1e6 * (t2 - t1) << "ms" << endl;
+    cout << "###############################################" << endl;
+
+    delete [] sparse_matrixA.p;
+    sparse_matrixA.p = NULL;
+    delete [] sparse_matrixA.i;
+    sparse_matrixA.i = NULL;
+    delete [] sparse_matrixA.x;
+    sparse_matrixA.x = NULL;
+    delete [] sparse_matrixB.p;
+    sparse_matrixB.p = NULL;
+    delete [] sparse_matrixB.i;
+    sparse_matrixB.i = NULL;
+    delete [] sparse_matrixB.x;
+    sparse_matrixB.x = NULL;
+    delete [] sparse_matrixC.p;
+    sparse_matrixC.p = NULL;
+    delete [] sparse_matrixC.i;
+    sparse_matrixC.i = NULL;
+    delete [] sparse_matrixC.x;
+    sparse_matrixC.x = NULL;
+    for(int i=0; i<Cc; i++) {
+        delete [] *(p_matrix_c+i);
+        *(p_matrix_c+i) = NULL;
+    }
+    delete [] p_matrix_c;
+    p_matrix_c = NULL;
+
+    r = pthread_mutex_unlock(&mutex);
+    assert(r==0);
+
+    for(int i=0;i<nthreads;i++) {
+        r = pthread_join(thread[i], 0);
+        assert(r==0);
+    }
+
+    return 0;
+}
+
+void *child(void *arg) {
+    int r;
+    r = pthread_mutex_lock(&mutex);
+    assert(r==0);
+
+    string str = "";
+    stringstream ss;
+    ifstream fileA, fileB;
+
+    double my_default_matrix[4][4] = {{1, 2, 0, 0},
+                                      {7, 0, 0, 4},
+                                      {0, 0, 0, 1},
+                                      {0, 9, 8, 1}};
     int Ar=4, Ac=4, Br=4, Bc=4;
 
     fileA.open("matrixA.txt", ios::in);
@@ -109,6 +280,9 @@ int main(int argc, char *argv[]) {
     // print_sparse_matrix(&sparse_matrixC, 0);
     // print_matrix(p_matrix_c, Cr, Cc);
 
+
+    cout << "###############################################" << endl;
+    cout << "Child" << endl;
     cout << "###############################################" << endl;
     cout << "A(" << Ar << "x" << Ac << ") multiply by B(" << Br << "x" << Bc << "): " << endl;
     cout << "multiplyMatrix:       " << 1e6 * (t1 - t0) << "ms" << endl;
@@ -139,7 +313,10 @@ int main(int argc, char *argv[]) {
     }
     delete [] p_matrix_c;
     p_matrix_c = NULL;
-    return 0;
+
+    r =pthread_mutex_unlock(&mutex);
+    assert(r==0);
+    pthread_exit(NULL);
 }
 
 void print_matrix(double **Xi_matrix, int row, int col) {

@@ -33,3 +33,4 @@
 
 # Customization
 core*
+*.log
