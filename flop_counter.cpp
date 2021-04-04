@@ -68,8 +68,11 @@ typedef struct InsTable {
     xed_iclass_enum_t _iclass;
     xed_category_enum_t _cat;
     xed_extension_enum_t _ext;
-    UINT64 _count;
+    UINT64 _execount;
+    UINT64 _cmpcount;
+    UINT64 _maskcount;
     UINT64 _opdno;
+    UINT64 _elemno;
     bool _isFLOP;
     bool _isFMA;
     bool _isScalarSimd;
@@ -78,13 +81,13 @@ typedef struct InsTable {
 
 // sizeof(RtnCount) = 152
 typedef struct RtnCount {
+    RTN _rtn;
     string _name;
     string _image;
     UINT64 _address;
-    RTN _rtn;
     UINT64 _rtnCount;
     UINT64 _icount;
-    UINT64 _flopcount;          // TODO
+    UINT64 _flopcount;
     INS_TABLE * _instable;
     struct RtnCount * _next;
 } RTN_COUNT;
@@ -206,6 +209,34 @@ thread_data_t* get_tls(THREADID tid) {
     return tdata;
 }
 
+void CalculateFLOP(RTN_COUNT * RtnList) {
+    int FlopCount, FMA_weight, element;
+    for(RTN_COUNT *rc = RtnList; rc; rc = rc->_next) {
+        FlopCount = 0;
+        for(int i=0; i<XED_IFORM_LAST; i++) {
+            if( rc->_instable[i]._isFLOP ) {
+                FMA_weight = (rc->_instable[i]._isFMA) ? 2 : 1;
+                element = rc->_instable[i]._elemno;
+                if( rc->_instable[i]._isMaskOP )
+                    rc->_instable[i]._cmpcount = rc->_instable[i]._maskcount * FMA_weight;
+                else
+                    rc->_instable[i]._cmpcount = rc->_instable[i]._execount * FMA_weight * element;
+                FlopCount += rc->_instable[i]._cmpcount;
+            }
+        }
+        rc->_flopcount = FlopCount;
+    }
+}
+
+int CountOnes(int val) {
+    int num = 0;
+    while(val) {
+        num += val % 2;
+        val /= 2;
+    }
+    return num;
+}
+
 /* ===================================================================== */
 // Analysis routines
 /* ===================================================================== */
@@ -222,7 +253,10 @@ VOID PIN_FAST_ANALYSIS_CALL routine_counter_mt(string *rtn_name, THREADID thread
     thread_data_t* tdata = get_tls(threadid);
     RTN_COUNT *rc = new RTN_COUNT;
     rc->_instable = new INS_TABLE[XED_IFORM_LAST];
-    for (int i=0; i<XED_IFORM_LAST; i++ ) rc->_instable[i]._count = 0;
+    for (int i=0; i<XED_IFORM_LAST; i++ ) {
+        rc->_instable[i]._execount = 0;
+        rc->_instable[i]._cmpcount = 0;
+    }
     rc->_name = *rtn_name;
     rc->_icount = 0;
     rc->_flopcount = 0;
@@ -232,15 +266,33 @@ VOID PIN_FAST_ANALYSIS_CALL routine_counter_mt(string *rtn_name, THREADID thread
 }
 
 // This function is called before every instruction is executed
-VOID PIN_FAST_ANALYSIS_CALL instruction_counter_mt(xed_iform_enum_t iform, 
-    bool isFLOP, bool isFMA, bool isScalarSimd, bool isMaskOP, THREADID threadid) {
+VOID PIN_FAST_ANALYSIS_CALL instruction_counter_mt(
+    xed_decoded_inst_t* xedd, xed_iform_enum_t iform, 
+    UINT64 elemno, 
+    bool isFLOP, bool isFMA, bool isScalarSimd, bool isMaskOP, const CONTEXT *ctxt, THREADID threadid) {
     thread_data_t* tdata = get_tls(threadid);
     tdata->RtnList->_icount++;
-    tdata->RtnList->_instable[iform]._count++;
+    tdata->RtnList->_instable[iform]._xedd = xedd;
+    tdata->RtnList->_instable[iform]._execount++;
+    tdata->RtnList->_instable[iform]._elemno = elemno;
     tdata->RtnList->_instable[iform]._isFLOP = isFLOP;
     tdata->RtnList->_instable[iform]._isFMA = isFMA;
     tdata->RtnList->_instable[iform]._isScalarSimd = isScalarSimd;
     tdata->RtnList->_instable[iform]._isMaskOP = isMaskOP;
+
+    /* Mask Testing -> Need AVX512 instructions for test */
+    const xed_inst_t* xedi = xedd->_inst;
+    for(int j=0; j<xedi->_noperands; j++) {
+        const xed_operand_t* op = xed_inst_operand(xedi, j);
+        xed_operand_enum_t op_enum = xed_operand_name(op);
+        xed_reg_enum_t reg_enum = xed_decoded_inst_get_reg(xedd, op_enum);
+        if( reg_enum >= XED_REG_MASK_FIRST && reg_enum <= XED_REG_MASK_LAST ) {
+            REG reg = INS_XedExactMapToPinReg(reg_enum);
+            UINT64 value = PIN_GetContextReg(ctxt, reg);
+            tdata->RtnList->_instable[iform]._maskcount = CountOnes(value);
+            // *out << xed_reg_enum_t2str(reg_enum) << " " << value << " " << CountOnes(value) << endl;
+        }
+    }
 }
 
 /* ===================================================================== */
@@ -265,7 +317,10 @@ VOID Image(IMG img, VOID *v) {
                     /* Allocate a counter for this routine */
                     RTN_COUNT * rc = new RTN_COUNT;
                     INS_TABLE *instb = new INS_TABLE[XED_IFORM_LAST];
-                    for (int i=0; i<XED_IFORM_LAST; i++ ) instb[i]._count = 0;
+                    for (int i=0; i<XED_IFORM_LAST; i++ ) {
+                        instb[i]._execount = 0;
+                        instb[i]._cmpcount = 0;
+                    }
 
                     /* The RTN goes away when the image is unloaded, so save it now */
                     /* because we need it in the fini */
@@ -286,6 +341,9 @@ VOID Image(IMG img, VOID *v) {
                     RTN_InsertCall(rtn, IPOINT_BEFORE, (AFUNPTR)routine_counter_mt, IARG_FAST_ANALYSIS_CALL,
                        IARG_PTR, &(rc->_name), IARG_THREAD_ID, IARG_END);
 
+                    // PIN_GetFullContextRegsSet();
+                    // PIN_GetContextReg (const CONTEXT *ctxt, REG reg)
+
                     /* For each instruction of the routine */
                     for ( INS ins = RTN_InsHead(rtn); INS_Valid(ins); ins = INS_Next(ins) ) {
                         xed_decoded_inst_t* xedd = INS_XedDec(ins);
@@ -299,6 +357,7 @@ VOID Image(IMG img, VOID *v) {
                             instb[iform]._cat = xed_decoded_inst_get_category(xedd);
                             instb[iform]._ext = xed_decoded_inst_get_extension(xedd);
                             instb[iform]._opdno = xed_decoded_inst_noperands(xedd);
+                            instb[iform]._elemno = xed_decoded_inst_operand_elements(xedd, 0);
                             instb[iform]._isFLOP = XEDD_isFLOP(xedd);
                             instb[iform]._isFMA = XEDD_isFMA(xedd);
                             instb[iform]._isScalarSimd = XEDD_isScalarSimd(xedd);
@@ -307,8 +366,8 @@ VOID Image(IMG img, VOID *v) {
 
                         /* Insert a call to docount to increment the instruction counter for this rtn */
                         INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)docount, IARG_PTR, &(rc->_icount), IARG_THREAD_ID, IARG_END);
-                        INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)docount, IARG_PTR, &(instb[iform]._count), IARG_THREAD_ID, IARG_END);
-                        INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)instruction_counter_mt, IARG_FAST_ANALYSIS_CALL, IARG_UINT64, iform, IARG_BOOL, instb[iform]._isFLOP, IARG_BOOL, instb[iform]._isFMA, IARG_BOOL, instb[iform]._isScalarSimd, IARG_BOOL, instb[iform]._isMaskOP, IARG_THREAD_ID, IARG_END);
+                        INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)docount, IARG_PTR, &(instb[iform]._execount), IARG_THREAD_ID, IARG_END);
+                        INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)instruction_counter_mt, IARG_FAST_ANALYSIS_CALL, IARG_PTR, instb[iform]._xedd, IARG_UINT64, iform, IARG_UINT64, instb[iform]._elemno, IARG_BOOL, instb[iform]._isFLOP, IARG_BOOL, instb[iform]._isFMA, IARG_BOOL, instb[iform]._isScalarSimd, IARG_BOOL, instb[iform]._isMaskOP, IARG_CONTEXT, IARG_THREAD_ID, IARG_END);
                     }
 
                     RTN_Close(rtn);
@@ -347,7 +406,10 @@ VOID ThreadFini(THREADID threadid, const CONTEXT *ctxt, INT32 code, VOID *v) {
     *out << "* Stopping tid " << threadid << ", code: " << code << endl;
     PIN_ReleaseLock(&pinLock);
 
-    // thread_data_t* tdata = get_tls(threadid);
+    thread_data_t* tdata = get_tls(threadid);
+    // *out << tdata << endl;
+    CalculateFLOP(tdata->RtnList);
+
     // delete tdata;
 }
 
@@ -359,15 +421,17 @@ VOID ThreadFini(THREADID threadid, const CONTEXT *ctxt, INT32 code, VOID *v) {
  *                              PIN_AddFiniFunction function call
  */
 VOID Fini(INT32 code, VOID *v) {
+
+    CalculateFLOP(RtnList);
     
     *out <<  "===============================================" << endl;
     *out <<  "           The Total Analysis Result           " << endl;
     *out <<  "===============================================" << endl;
  
-    for (RTN_COUNT * rc = RtnList; rc; rc = rc->_next) {
+    for(RTN_COUNT * rc = RtnList; rc; rc = rc->_next) {
 
         /* Info of FLOP instructions */
-        if (rc->_icount > 0) {
+        if(rc->_icount > 0) {
 
             /* Basic Info */
             *out << "Routine (Procedure): " << rc->_name  << endl
@@ -384,37 +448,55 @@ VOID Fini(INT32 code, VOID *v) {
                 //  << setw(12) << "XED_ICLASS"
                  << setw(12) << "[XED_CAT]"
                  << setw(11) << "[XED_EXT]"
-                 << setw(10) << "[counts]"
-                 << setw(7) << "[FMA]"
-                 << setw(15) << "[Scalar_SIMD]"
-                 << setw(11) << "[Mask_OP]"
+                 << setw(10) << "*[e_cnt]"
+                 << setw(10) << "*[c_cnt]"
+                 << setw(10) << "*[m_cnt]" 
+                 << setw(8) << "*[FMA]"
+                 << setw(7) << "*[SS]"
+                 << setw(10) << "[MaskOP]"
                  << setw(8) << "[#opd]"
-                 << setw(22) << "[opd1(bit/type/elm)]"
-                 << setw(22) << "[opd2(bit/type/elm)]"
-                 << setw(22) << "[opd3(bit/type/elm)]"
+                 << setw(15) << "*[opd1]"
+                 << setw(15) << "[opd2]"
+                 << setw(15) << "[opd3]"
+                 << setw(15) << "[opd4]"
+                 << setw(15) << "[opd5]"
                  << endl; 
 
             for(int i=0; i<XED_IFORM_LAST; i++) {
-                if( rc->_instable[i]._isFLOP ) {
+                if( rc->_instable[i]._isFLOP && rc->_instable[i]._execount ) {
                     *out << "    " << std::setiosflags(ios::left) 
                          << setw(27) << xed_iform_enum_t2str(static_cast<xed_iform_enum_t>(i)) 
                          << std::resetiosflags(ios::left) 
                         //  << setw(12) << xed_iclass_enum_t2str(rc->_instable[i]._iclass)
                          << setw(12) << xed_category_enum_t2str(rc->_instable[i]._cat) 
                          << setw(11) << xed_extension_enum_t2str(rc->_instable[i]._ext)
-                         << setw(10) << rc->_instable[i]._count 
-                         << setw(7) << rc->_instable[i]._isFMA 
-                         << setw(15) << rc->_instable[i]._isScalarSimd 
-                         << setw(11) << rc->_instable[i]._isMaskOP
+                         << setw(10) << rc->_instable[i]._execount 
+                         << setw(10) << rc->_instable[i]._cmpcount 
+                         << setw(10) << rc->_instable[i]._maskcount
+                         << setw(8) << rc->_instable[i]._isFMA 
+                         << setw(7) << rc->_instable[i]._isScalarSimd 
+                         << setw(10) << rc->_instable[i]._isMaskOP
                          << setw(8) << rc->_instable[i]._opdno;
                     for(int j=0; j<(int)xed_decoded_inst_noperands(rc->_instable[i]._xedd); j++) {
-                        *out << setw(22) 
+                        *out << setw(15) 
                         << decstr(xed_decoded_inst_operand_element_size_bits(rc->_instable[i]._xedd, j)) 
                         + "/" 
                         + xed_operand_element_type_enum_t2str(xed_decoded_inst_operand_element_type(rc->_instable[i]._xedd, j)) 
                         + "/" 
                         + decstr(xed_decoded_inst_operand_elements(rc->_instable[i]._xedd, j));
                     }
+
+                    /* Mask Testing*/
+                    // *out << endl; 
+                    // *out << "        ";
+                    // const xed_inst_t* xedi = rc->_instable[i]._xedd->_inst;
+                    // for(int j=0; j<xedi->_noperands; j++) {
+                    //     const xed_operand_t* op = xed_inst_operand(xedi, j);
+                    //     xed_operand_enum_t op_enum = xed_operand_name(op); 
+                    //     xed_reg_enum_t reg_enum = xed_decoded_inst_get_reg(rc->_instable[i]._xedd, op_enum);
+                    //     *out << xed_reg_enum_t2str(reg_enum) << " ";
+                    // }
+
                     *out << endl; 
 
                     /* Mask Testing*/
@@ -430,6 +512,12 @@ VOID Fini(INT32 code, VOID *v) {
                     // *out << mask << endl;
                 }
             }
+            *out << "    * [e_cnt]: Executions Count. " << endl;
+            *out << "    * [c_cnt]: Computation Count. " << endl;
+            *out << "    * [m_cnt]: Masking Bits Count. " << endl;
+            *out << "    * [FMA]:   Fused Multiply-Add. " << endl;
+            *out << "    * [SS]:    Scalar SIMD. " << endl;
+            *out << "    * [opd]:   Shows bits, type and number of elements (#element). " << endl;
             *out << endl;
         }
     }
@@ -462,7 +550,8 @@ VOID Fini(INT32 code, VOID *v) {
             *out << "    Routine (Procedure): " << rc->_name  << endl
                  << "    Image:               " << rc->_image  << endl
                  << "    Instructions counts: " << setw(10) << rc->_icount  << endl
-                 << "    FLOP counts (TODO):  " << setw(10) << rc->_flopcount << endl;
+                 << "    FLOP counts (TODO):  " << setw(10) << rc->_flopcount 
+                 << endl;
 
             *out << "    FLOP instructions: " << endl
                  << "        " << std::setiosflags(ios::left) 
@@ -471,10 +560,14 @@ VOID Fini(INT32 code, VOID *v) {
                 //  << setw(12) << "XED_ICLASS"
                 //  << setw(12) << "XED_CAT"
                 //  << setw(11) << "XED_EXT"
-                 << setw(10) << "[counts]"
+                 << setw(9) << "[e_cnt]"
+                 << setw(9) << "[c_cnt]"
+                 << setw(9) << "[m_cnt]" 
                  << setw(7) << "[FMA]"
-                 << setw(15) << "[Scalar_SIMD]"
-                 << setw(11) << "[Mask_OP]" << endl;
+                 << setw(6) << "[SS]"
+                 << setw(10) << "[MaskOP]"
+                 << setw(17) << "[#element_opd1]" 
+                 << endl;
             for(int i=0; i<XED_IFORM_LAST; i++) {
                 if( rc->_instable[i]._isFLOP ) {
                     *out << "        " << std::setiosflags(ios::left) 
@@ -483,11 +576,40 @@ VOID Fini(INT32 code, VOID *v) {
                         //  << setw(12) << xed_iclass_enum_t2str(rc->_instable[i]._iclass)
                         //  << setw(12) << xed_category_enum_t2str(rc->_instable[i]._cat) 
                         //  << setw(11) << xed_extension_enum_t2str(rc->_instable[i]._ext)
-                         << setw(10) << rc->_instable[i]._count 
+                         << setw(9) << rc->_instable[i]._execount 
+                         << setw(9) << rc->_instable[i]._cmpcount 
+                         << setw(9) << rc->_instable[i]._maskcount
                          << setw(7) << rc->_instable[i]._isFMA 
-                         << setw(15) << rc->_instable[i]._isScalarSimd 
-                         << setw(11) << rc->_instable[i]._isMaskOP << endl;
-                }
+                         << setw(6) << rc->_instable[i]._isScalarSimd 
+                         << setw(10) << rc->_instable[i]._isMaskOP 
+                         << setw(17) << rc->_instable[i]._elemno;
+                        //  << " Test xedd: " << xed_iform_enum_t2str(xed_decoded_inst_get_iform_enum(rc->_instable[i]._xedd))
+
+                    /* Mask Testing */
+                    // *out << " Mask Testing (Find register): ";
+                    // const xed_inst_t* xedi = rc->_instable[i]._xedd->_inst;
+                    // for(int j=0; j<xedi->_noperands; j++) {
+                    //     const xed_operand_t* op = xed_inst_operand(xedi, j);
+                    //     xed_operand_enum_t op_enum = xed_operand_name(op); 
+                    //     xed_reg_enum_t reg_enum = xed_decoded_inst_get_reg(rc->_instable[i]._xedd, op_enum);
+                    //     *out << xed_reg_enum_t2str(reg_enum) << " ";
+                    // }
+
+                    *out << endl;
+
+                    // char buf[100];
+                    // xed_operand_values_t* op_value = xed_decoded_inst_operands(rc->_instable[i]._xedd);
+                    // xed_reg_enum_t op_enum = xed_decoded_inst_get_reg(rc->_instable[i]._xedd, XED_OPERAND_);
+                    // *out << xed_reg_enum_t2str(op_enum) << endl; 
+                    // xed_reg_enum_t op_enum = xed_decoded_inst_get_reg(rc->_instable[i]._xedd, XED_OPERAND_MASK);
+                    // *out << xed_reg_enum_t2str(op_enum) << endl; 
+                    // xed_operand_values_dump(op_value, buf, 100);
+                    // xed_operand_values_print_short(op_value, buf, 100);
+                    // xed_operand_print(op, buf, 100);
+                    // xed_bits_t mask = xed3_operand_get_mask(rc->_instable[i]._xedd);
+                    // *out << buf << endl;
+                    // *out << mask << endl;
+                    }
             }
         }
         *out << endl;

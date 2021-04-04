@@ -17,6 +17,15 @@ $ make
 $ pin -t ./obj-intel64/flop_counter.so -- <Target_Program>
 ```
 
+## TODO List
+* [x] Multi-threading support
+* [X] AVX512 Masking computation and execution counter 
+     * Find the value of Mask Register: `instruction_counter_mt()`
+     * Compute the number of "1" in the Mask Register: `CountOnes()`
+     * Compute the execution times based on the "1s" and "is FMA or not": `CalculateFLOP()`
+* [X] Total FLOP computations: `CalculateFLOP()`
+* [ ] Test with AVX512 Masking instructions. 
+
 ## Sample Result
 `$ pin -t ./obj-intel64/flop_counter.so -- ./obj-intel64/matrix_multiplications.exe`
 ```
@@ -45,40 +54,42 @@ This application is instrumented by MyPinTool
 Child
 ###############################################
 A(6x6) multiply by B(6x6): 
-multiplyMatrix:       14664.9ms
-multiplySparseMatrix: 26923.2ms
+multiplyMatrix:       22416.1ms
+multiplySparseMatrix: 49630.9ms
 ###############################################
 ###############################################
 Child
 ###############################################
 A(6x6) multiply by B(6x6): 
-multiplyMatrix:       411.034ms
-multiplySparseMatrix: 249.863ms
+multiplyMatrix:       967.979ms
+multiplySparseMatrix: 429.869ms
 ###############################################
 ###############################################
 Child
 ###############################################
 A(6x6) multiply by B(6x6): 
-multiplyMatrix:       457.048ms
-multiplySparseMatrix: 260.115ms
+multiplyMatrix:       637.054ms
+multiplySparseMatrix: 452.042ms
+###############################################
+###############################################
+Child
+###############################################
+A(6x6) multiply by B(6x6): 
+multiplyMatrix:       988.96ms
+multiplySparseMatrix: 793.934ms
 ###############################################
 * Stopping tid 4, code: 0
-* Stopping tid 1, code: 0
 * Stopping tid 3, code: 0
-###############################################
-Child
-###############################################
-A(6x6) multiply by B(6x6): 
-multiplyMatrix:       416.994ms
-multiplySparseMatrix: 247.955ms
-###############################################
 * Stopping tid 2, code: 0
+* Stopping tid 1, code: 0
 ###############################################
 Mother
 ###############################################
 A(6x6) multiply by B(6x6): 
-multiplyMatrix:       2228.02ms
-multiplySparseMatrix: 1397.85ms
+multiplyMatrix:       62852.1ms
+multiplySparseMatrix: 1982.93ms
+multiplyMatrix:       9114.98ms
+multiplySparseMatrix: 502.11ms
 ###############################################
 * Stopping tid 0, code: 0
 ===============================================
@@ -86,26 +97,38 @@ multiplySparseMatrix: 1397.85ms
 ===============================================
 Routine (Procedure): _Z20multiplySparseMatrixP9cs_sparseS0_S0_
 Image:               matrix_multiplications.exe
-Address:             0x404370
+Address:             0x4044c0
 Calls:                        6
 Instructions counts:       6132
-FLOP counts (TODO):           0
+FLOP counts (TODO):         420
 FLOP instructions: 
-    [XED_IFORM]                   [XED_CAT]  [XED_EXT]  [counts]  [FMA]  [Scalar_SIMD]  [Mask_OP]  [#opd]  [opd1(bit/type/elm)]  [opd2(bit/type/elm)]  [opd3(bit/type/elm)]
-    ADDSD_XMMsd_MEMsd                   SSE       SSE2       102      0              1          0       2           64/DOUBLE/1           64/DOUBLE/1
-    MULSD_XMMsd_MEMsd                   SSE       SSE2       102      0              1          0       2           64/DOUBLE/1           64/DOUBLE/1
-    UCOMISD_XMMsd_XMMsd                 SSE       SSE2       216      0              1          0       3           64/DOUBLE/1           64/DOUBLE/1              32/INT/1
+    [XED_IFORM]                   [XED_CAT]  [XED_EXT]  *[e_cnt]  *[c_cnt]  *[m_cnt]  *[FMA]  *[SS]  [MaskOP]  [#opd]        *[opd1]         [opd2]         [opd3]         [opd4]         [opd5]
+    ADDSD_XMMsd_MEMsd                   SSE       SSE2       102       102         0       0      1         0       2    64/DOUBLE/1    64/DOUBLE/1
+    MULSD_XMMsd_MEMsd                   SSE       SSE2       102       102         0       0      1         0       2    64/DOUBLE/1    64/DOUBLE/1
+    UCOMISD_XMMsd_XMMsd                 SSE       SSE2       216       216         0       0      1         0       3    64/DOUBLE/1    64/DOUBLE/1       32/INT/1
+    * [e_cnt]: Executions Count. 
+    * [c_cnt]: Computation Count. 
+    * [m_cnt]: Masking Bits Count. 
+    * [FMA]:   Fused Multiply-Add. 
+    * [SS]:    Scalar SIMD. 
+    * [opd]:   Shows bits, type and number of elements (#element). 
 
 Routine (Procedure): _Z14multiplyMatrixPPdPiS1_S0_S1_S1_S0_S1_S1_.part.0
 Image:               matrix_multiplications.exe
-Address:             0x403930
+Address:             0x403a80
 Calls:                        6
 Instructions counts:      14454
-FLOP counts (TODO):           0
+FLOP counts (TODO):        2592
 FLOP instructions: 
-    [XED_IFORM]                   [XED_CAT]  [XED_EXT]  [counts]  [FMA]  [Scalar_SIMD]  [Mask_OP]  [#opd]  [opd1(bit/type/elm)]  [opd2(bit/type/elm)]  [opd3(bit/type/elm)]
-    ADDSD_XMMsd_XMMsd                   SSE       SSE2      1296      0              1          0       2           64/DOUBLE/1           64/DOUBLE/1
-    MULSD_XMMsd_MEMsd                   SSE       SSE2      1296      0              1          0       2           64/DOUBLE/1           64/DOUBLE/1
+    [XED_IFORM]                   [XED_CAT]  [XED_EXT]  *[e_cnt]  *[c_cnt]  *[m_cnt]  *[FMA]  *[SS]  [MaskOP]  [#opd]        *[opd1]         [opd2]         [opd3]         [opd4]         [opd5]
+    ADDSD_XMMsd_XMMsd                   SSE       SSE2      1296      1296         0       0      1         0       2    64/DOUBLE/1    64/DOUBLE/1
+    MULSD_XMMsd_MEMsd                   SSE       SSE2      1296      1296         0       0      1         0       2    64/DOUBLE/1    64/DOUBLE/1
+    * [e_cnt]: Executions Count. 
+    * [c_cnt]: Computation Count. 
+    * [m_cnt]: Masking Bits Count. 
+    * [FMA]:   Fused Multiply-Add. 
+    * [SS]:    Scalar SIMD. 
+    * [opd]:   Shows bits, type and number of elements (#element). 
 
 ===============================================
       The Multi-Threading Analysis Result      
@@ -115,126 +138,118 @@ Routine counts: 2
     Routine (Procedure): _Z20multiplySparseMatrixP9cs_sparseS0_S0_
     Image:               
     Instructions counts:       1022
-    FLOP counts (TODO):           0
+    FLOP counts (TODO):          70
     FLOP instructions: 
-        [XED_IFORM]                  [counts]  [FMA]  [Scalar_SIMD]  [Mask_OP]
-        ADDSD_XMMsd_MEMsd                  17      0              1          0
-        MULSD_XMMsd_MEMsd                  17      0              1          0
-        UCOMISD_XMMsd_XMMsd                36      0              1          0
+        [XED_IFORM]                  [e_cnt]  [c_cnt]  [m_cnt]  [FMA]  [SS]  [MaskOP]  [#element_opd1]
+        ADDSD_XMMsd_MEMsd                 17       17        0      0     1         0                1
+        MULSD_XMMsd_MEMsd                 17       17        0      0     1         0                1
+        UCOMISD_XMMsd_XMMsd               36       36        0      0     1         0                1
     Routine (Procedure): _Z14multiplyMatrixPPdPiS1_S0_S1_S1_S0_S1_S1_.part.0
     Image:               
     Instructions counts:       2409
-    FLOP counts (TODO):           0
+    FLOP counts (TODO):         432
     FLOP instructions: 
-        [XED_IFORM]                  [counts]  [FMA]  [Scalar_SIMD]  [Mask_OP]
-        ADDSD_XMMsd_XMMsd                 216      0              1          0
-        MULSD_XMMsd_MEMsd                 216      0              1          0
+        [XED_IFORM]                  [e_cnt]  [c_cnt]  [m_cnt]  [FMA]  [SS]  [MaskOP]  [#element_opd1]
+        ADDSD_XMMsd_XMMsd                216      216        0      0     1         0                1
+        MULSD_XMMsd_MEMsd                216      216        0      0     1         0                1
 
 Thread ID: 3
 Routine counts: 2
     Routine (Procedure): _Z20multiplySparseMatrixP9cs_sparseS0_S0_
     Image:               
     Instructions counts:       1022
-    FLOP counts (TODO):           0
+    FLOP counts (TODO):          70
     FLOP instructions: 
-        [XED_IFORM]                  [counts]  [FMA]  [Scalar_SIMD]  [Mask_OP]
-        ADDSD_XMMsd_MEMsd                  17      0              1          0
-        MULSD_XMMsd_MEMsd                  17      0              1          0
-        UCOMISD_XMMsd_XMMsd                36      0              1          0
+        [XED_IFORM]                  [e_cnt]  [c_cnt]  [m_cnt]  [FMA]  [SS]  [MaskOP]  [#element_opd1]
+        ADDSD_XMMsd_MEMsd                 17       17        0      0     1         0                1
+        MULSD_XMMsd_MEMsd                 17       17        0      0     1         0                1
+        UCOMISD_XMMsd_XMMsd               36       36        0      0     1         0                1
     Routine (Procedure): _Z14multiplyMatrixPPdPiS1_S0_S1_S1_S0_S1_S1_.part.0
     Image:               
     Instructions counts:       2409
-    FLOP counts (TODO):           0
+    FLOP counts (TODO):         432
     FLOP instructions: 
-        [XED_IFORM]                  [counts]  [FMA]  [Scalar_SIMD]  [Mask_OP]
-        ADDSD_XMMsd_XMMsd                 216      0              1          0
-        MULSD_XMMsd_MEMsd                 216      0              1          0
+        [XED_IFORM]                  [e_cnt]  [c_cnt]  [m_cnt]  [FMA]  [SS]  [MaskOP]  [#element_opd1]
+        ADDSD_XMMsd_XMMsd                216      216        0      0     1         0                1
+        MULSD_XMMsd_MEMsd                216      216        0      0     1         0                1
 
 Thread ID: 2
 Routine counts: 2
     Routine (Procedure): _Z20multiplySparseMatrixP9cs_sparseS0_S0_
     Image:               
     Instructions counts:       1022
-    FLOP counts (TODO):           0
+    FLOP counts (TODO):          70
     FLOP instructions: 
-        [XED_IFORM]                  [counts]  [FMA]  [Scalar_SIMD]  [Mask_OP]
-        ADDSD_XMMsd_MEMsd                  17      0              1          0
-        MULSD_XMMsd_MEMsd                  17      0              1          0
-        UCOMISD_XMMsd_XMMsd                36      0              1          0
+        [XED_IFORM]                  [e_cnt]  [c_cnt]  [m_cnt]  [FMA]  [SS]  [MaskOP]  [#element_opd1]
+        ADDSD_XMMsd_MEMsd                 17       17        0      0     1         0                1
+        MULSD_XMMsd_MEMsd                 17       17        0      0     1         0                1
+        UCOMISD_XMMsd_XMMsd               36       36        0      0     1         0                1
     Routine (Procedure): _Z14multiplyMatrixPPdPiS1_S0_S1_S1_S0_S1_S1_.part.0
     Image:               
     Instructions counts:       2409
-    FLOP counts (TODO):           0
+    FLOP counts (TODO):         432
     FLOP instructions: 
-        [XED_IFORM]                  [counts]  [FMA]  [Scalar_SIMD]  [Mask_OP]
-        ADDSD_XMMsd_XMMsd                 216      0              1          0
-        MULSD_XMMsd_MEMsd                 216      0              1          0
+        [XED_IFORM]                  [e_cnt]  [c_cnt]  [m_cnt]  [FMA]  [SS]  [MaskOP]  [#element_opd1]
+        ADDSD_XMMsd_XMMsd                216      216        0      0     1         0                1
+        MULSD_XMMsd_MEMsd                216      216        0      0     1         0                1
 
 Thread ID: 1
 Routine counts: 2
     Routine (Procedure): _Z20multiplySparseMatrixP9cs_sparseS0_S0_
     Image:               
     Instructions counts:       1022
-    FLOP counts (TODO):           0
+    FLOP counts (TODO):          70
     FLOP instructions: 
-        [XED_IFORM]                  [counts]  [FMA]  [Scalar_SIMD]  [Mask_OP]
-        ADDSD_XMMsd_MEMsd                  17      0              1          0
-        MULSD_XMMsd_MEMsd                  17      0              1          0
-        UCOMISD_XMMsd_XMMsd                36      0              1          0
+        [XED_IFORM]                  [e_cnt]  [c_cnt]  [m_cnt]  [FMA]  [SS]  [MaskOP]  [#element_opd1]
+        ADDSD_XMMsd_MEMsd                 17       17        0      0     1         0                1
+        MULSD_XMMsd_MEMsd                 17       17        0      0     1         0                1
+        UCOMISD_XMMsd_XMMsd               36       36        0      0     1         0                1
     Routine (Procedure): _Z14multiplyMatrixPPdPiS1_S0_S1_S1_S0_S1_S1_.part.0
     Image:               
     Instructions counts:       2409
-    FLOP counts (TODO):           0
+    FLOP counts (TODO):         432
     FLOP instructions: 
-        [XED_IFORM]                  [counts]  [FMA]  [Scalar_SIMD]  [Mask_OP]
-        ADDSD_XMMsd_XMMsd                 216      0              1          0
-        MULSD_XMMsd_MEMsd                 216      0              1          0
+        [XED_IFORM]                  [e_cnt]  [c_cnt]  [m_cnt]  [FMA]  [SS]  [MaskOP]  [#element_opd1]
+        ADDSD_XMMsd_XMMsd                216      216        0      0     1         0                1
+        MULSD_XMMsd_MEMsd                216      216        0      0     1         0                1
 
 Thread ID: 0
 Routine counts: 4
     Routine (Procedure): _Z20multiplySparseMatrixP9cs_sparseS0_S0_
     Image:               
     Instructions counts:       1022
-    FLOP counts (TODO):           0
+    FLOP counts (TODO):          70
     FLOP instructions: 
-        [XED_IFORM]                  [counts]  [FMA]  [Scalar_SIMD]  [Mask_OP]
-        ADDSD_XMMsd_MEMsd                  17      0              1          0
-        MULSD_XMMsd_MEMsd                  17      0              1          0
-        UCOMISD_XMMsd_XMMsd                36      0              1          0
+        [XED_IFORM]                  [e_cnt]  [c_cnt]  [m_cnt]  [FMA]  [SS]  [MaskOP]  [#element_opd1]
+        ADDSD_XMMsd_MEMsd                 17       17        0      0     1         0                1
+        MULSD_XMMsd_MEMsd                 17       17        0      0     1         0                1
+        UCOMISD_XMMsd_XMMsd               36       36        0      0     1         0                1
     Routine (Procedure): _Z14multiplyMatrixPPdPiS1_S0_S1_S1_S0_S1_S1_.part.0
     Image:               
     Instructions counts:       2409
-    FLOP counts (TODO):           0
+    FLOP counts (TODO):         432
     FLOP instructions: 
-        [XED_IFORM]                  [counts]  [FMA]  [Scalar_SIMD]  [Mask_OP]
-        ADDSD_XMMsd_XMMsd                 216      0              1          0
-        MULSD_XMMsd_MEMsd                 216      0              1          0
+        [XED_IFORM]                  [e_cnt]  [c_cnt]  [m_cnt]  [FMA]  [SS]  [MaskOP]  [#element_opd1]
+        ADDSD_XMMsd_XMMsd                216      216        0      0     1         0                1
+        MULSD_XMMsd_MEMsd                216      216        0      0     1         0                1
     Routine (Procedure): _Z20multiplySparseMatrixP9cs_sparseS0_S0_
     Image:               
     Instructions counts:       1022
-    FLOP counts (TODO):           0
+    FLOP counts (TODO):          70
     FLOP instructions: 
-        [XED_IFORM]                  [counts]  [FMA]  [Scalar_SIMD]  [Mask_OP]
-        ADDSD_XMMsd_MEMsd                  17      0              1          0
-        MULSD_XMMsd_MEMsd                  17      0              1          0
-        UCOMISD_XMMsd_XMMsd                36      0              1          0
+        [XED_IFORM]                  [e_cnt]  [c_cnt]  [m_cnt]  [FMA]  [SS]  [MaskOP]  [#element_opd1]
+        ADDSD_XMMsd_MEMsd                 17       17        0      0     1         0                1
+        MULSD_XMMsd_MEMsd                 17       17        0      0     1         0                1
+        UCOMISD_XMMsd_XMMsd               36       36        0      0     1         0                1
     Routine (Procedure): _Z14multiplyMatrixPPdPiS1_S0_S1_S1_S0_S1_S1_.part.0
     Image:               
     Instructions counts:       2409
-    FLOP counts (TODO):           0
+    FLOP counts (TODO):         432
     FLOP instructions: 
-        [XED_IFORM]                  [counts]  [FMA]  [Scalar_SIMD]  [Mask_OP]
-        ADDSD_XMMsd_XMMsd                 216      0              1          0
-        MULSD_XMMsd_MEMsd                 216      0              1          0
+        [XED_IFORM]                  [e_cnt]  [c_cnt]  [m_cnt]  [FMA]  [SS]  [MaskOP]  [#element_opd1]
+        ADDSD_XMMsd_XMMsd                216      216        0      0     1         0                1
+        MULSD_XMMsd_MEMsd                216      216        0      0     1         0                1
 ```
-
-## TODO List
-* [x] Multi-threading support
-* [ ] AVX512 Masking computation and execution counter 
-     * Find the value of Mask Register: `xed3_operand_get_mask(xed_decoded_inst_t *)` -> need testing
-     * Compute the number of "1" in the Mask Register
-     * Compute the execution times based on the "1s" and "is FMA or not"
-* [ ] Total FLOP computations
 
 ## Reference
 * [Pin - A Dynamic Binary Instrumentation Tool](https://software.intel.com/content/www/us/en/develop/articles/pin-a-dynamic-binary-instrumentation-tool.html)

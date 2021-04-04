@@ -144,14 +144,16 @@ int main(int argc, char *argv[]) {
     r = pthread_mutex_lock(&mutex);
     assert(r==0);
 
-    double t0, t1, t2;
+    double t0, t1, t2, t3, t4;
     t0 = wtime();
     multiplyMatrix(p_matrixA, &Ar, &Ac, p_matrixB, &Br, &Bc, p_matrix_c, &Cr, &Cc);
     t1 = wtime();
     multiplySparseMatrix(&sparse_matrixA, &sparse_matrixB, &sparse_matrixC);
     t2 = wtime();
     multiplyMatrix(p_matrixA, &Ar, &Ac, p_matrixB, &Br, &Bc, p_matrix_c, &Cr, &Cc);
+    t3 = wtime();
     multiplySparseMatrix(&sparse_matrixA, &sparse_matrixB, &sparse_matrixC);
+    t4 = wtime();
 
     // print_sparse_matrix(&sparse_matrixC, 0);
     // print_matrix(p_matrix_c, Cr, Cc);
@@ -162,6 +164,8 @@ int main(int argc, char *argv[]) {
     cout << "A(" << Ar << "x" << Ac << ") multiply by B(" << Br << "x" << Bc << "): " << endl;
     cout << "multiplyMatrix:       " << 1e6 * (t1 - t0) << "ms" << endl;
     cout << "multiplySparseMatrix: " << 1e6 * (t2 - t1) << "ms" << endl;
+    cout << "multiplyMatrix:       " << 1e6 * (t3 - t2) << "ms" << endl;
+    cout << "multiplySparseMatrix: " << 1e6 * (t4 - t3) << "ms" << endl;
     cout << "###############################################" << endl;
 
     delete [] sparse_matrixA.p;
