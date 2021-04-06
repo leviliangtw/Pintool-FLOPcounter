@@ -32,5 +32,6 @@
 *.app
 
 # Customization
+obj-intel64
 core*
 *.log
