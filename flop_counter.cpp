@@ -33,14 +33,14 @@ using std::stringstream;
 // Global variables 
 /* ================================================================== */
 
-std::ostream * out = &cerr;
+std::ostream *out = &cerr;
 
 const char *target_image;
 
 const char *target_routines[] = {
-    // "main",
-    "multiplyMatrix",
-    "multiplySparseMatrix",
+    "main",
+    // "multiplyMatrix",
+    // "multiplySparseMatrix",
     // "print_matrix",
     // "print_sparse_matrix",
     ""  // EOF
@@ -75,7 +75,7 @@ typedef struct RtnCount {   // sizeof(RtnCount) = 152
     UINT64 _rtnCount;
     UINT64 _icount;
     UINT64 _flopcount;
-    INS_COUNT * _instable;
+    INS_COUNT *_instable;
     struct RtnCount * _next;
 } RTN_COUNT;
 
@@ -86,7 +86,7 @@ class thread_data_t {       // sizeof(thread_data_t) = 64
     UINT64 RtnList_len;     // sizeof(UINT64) = 8
     RtnCount *RtnList;      // sizeof(RtnCount *) = 8
     UINT8 _pad[PADSIZE];    // sizeof(UINT8*PADSIZE) = 32
-    thread_data_t * _next;  // sizeof(thread_data_t *) = 8
+    thread_data_t *_next;   // sizeof(thread_data_t *) = 8
 };
 
 // Glogal attribute table of all instructions
@@ -98,7 +98,7 @@ RTN_COUNT *RtnList = 0;
 // Linked list of instruction counts for each thread
 thread_data_t *TdList = 0;
 
-// key for accessing TLS storage in the threads. initialized once in main()
+// Key for accessing TLS storage in the threads. initialized once in main()
 static TLS_KEY tls_key = INVALID_TLS_KEY;
 
 PIN_LOCK pinLock;
@@ -128,7 +128,7 @@ INT32 Usage() {
     return -1;
 }
 
-const char * StripPath(const char * path) {
+const char *StripPath(const char * path) {
     const char * file = strrchr(path,'/');
     if (file)
         return file+1;
@@ -136,7 +136,7 @@ const char * StripPath(const char * path) {
         return path;
 }
 
-const char * StripName(const char * fullname) {
+const char *StripName(const char * fullname) {
     const char * name = strtok((char *)fullname, "(");
     if (name)
         return name;
@@ -207,7 +207,7 @@ bool XEDD_isMaskOP(xed_decoded_inst_t* xedd) {
     return xed_decoded_inst_get_attribute(xedd, XED_ATTRIBUTE_MASKOP);
 }
 
-void XEDD_PrintAttribute(xed_decoded_inst_t* xedd) {
+void XEDD_printAttribute(xed_decoded_inst_t* xedd) {
     xed_attributes_t attr = xed_decoded_inst_get_attributes(xedd);
     for (int i=0; i<64; i++) {
         if(attr.a1 % 2 == 1) *out << xed_attribute_enum_t2str(static_cast<xed_attribute_enum_t>(i)) << " ";
@@ -224,52 +224,8 @@ thread_data_t* get_tls(THREADID tid) {
     return tdata;
 }
 
-void CalculateFLOP(RTN_COUNT *rl) {
-    UINT64 FlopCount, FMA_weight, element;
-    for(RTN_COUNT *rc = rl; rc; rc = rc->_next) {
-        FlopCount = 0;
-        for(int i=0; i<XED_IFORM_LAST; i++) {
-            if(rc->_instable[i]._execount) {
-                rc->_icount += rc->_instable[i]._execount;
-                if( insAttr[i]._isFLOP) {
-                    FMA_weight = (insAttr[i]._isFMA) ? 2 : 1;
-                    element = insAttr[i]._elemno;
-                    if( insAttr[i]._isMaskOP )
-                        rc->_instable[i]._cmpcount = rc->_instable[i]._maskcount * FMA_weight;
-                    else
-                        rc->_instable[i]._cmpcount = rc->_instable[i]._execount * FMA_weight * element;
-                    FlopCount += rc->_instable[i]._cmpcount;
-                }
-            }
-        }
-        rc->_flopcount = FlopCount;
-    }
-}
-
-void CalculateTotalFLOP(RTN_COUNT *rl, thread_data_t *tl) {
-    for(RTN_COUNT *rc = rl; rc; rc = rc->_next) {
-        rc->_icount = 0;
-        rc->_flopcount = 0;
-        for(thread_data_t *td = TdList; td; td = td->_next) {
-            for (RTN_COUNT * trc = td->RtnList; trc; trc = trc->_next) {
-                if (rc->_name == trc->_name) {
-                    rc->_icount += trc->_icount;
-                    rc->_flopcount += trc->_flopcount;
-                    for(int i=0; i<XED_IFORM_LAST; i++) {
-                        if(trc->_instable[i]._execount) {
-                            rc->_instable[i]._execount += trc->_instable[i]._execount;
-                            rc->_instable[i]._cmpcount += trc->_instable[i]._cmpcount;
-                        }
-                        if(trc->_instable[i]._maskcount) {
-                            rc->_instable[i]._maskcount += trc->_instable[i]._maskcount;
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
+/* Count the existing ones in an integer */
+/* Used for the Mask Register of AVX512 */
 int CountOnes(int val) {
     int num = 0;
     while(val) {
@@ -279,40 +235,95 @@ int CountOnes(int val) {
     return num;
 }
 
+/* Calculate the Computation Count and Flop Count */
+/* based on the Execution Count and Mask Count in a Thread Data. */
+void TL_calculateStatistics(RTN_COUNT *trl) {
+    UINT64 FlopCount, FMA_weight, element;
+    for(RTN_COUNT *trc = trl; trc; trc = trc->_next) {
+        FlopCount = 0;
+        for(int i=0; i<XED_IFORM_LAST; i++) {
+            if(trc->_instable[i]._execount) {
+                trc->_icount += trc->_instable[i]._execount;
+                if( insAttr[i]._isFLOP) {
+                    FMA_weight = (insAttr[i]._isFMA) ? 2 : 1;
+                    element = insAttr[i]._elemno;
+                    if( insAttr[i]._isMaskOP )
+                        trc->_instable[i]._cmpcount = trc->_instable[i]._maskcount * FMA_weight;
+                    else
+                        trc->_instable[i]._cmpcount = trc->_instable[i]._execount * FMA_weight * element;
+                    FlopCount += trc->_instable[i]._cmpcount;
+                }
+            }
+        }
+        trc->_flopcount = FlopCount;
+    }
+}
+
+
+/* Calculate the total Counts based all Thread Data. */
+void RL_calculateStatistics(RTN_COUNT *rl, thread_data_t *tl) {
+    for(RTN_COUNT *rc = rl; rc; rc = rc->_next) {
+        for(thread_data_t *td = TdList; td; td = td->_next) {
+            for (RTN_COUNT * trc = td->RtnList; trc; trc = trc->_next) {
+                if (rc->_name == trc->_name) {
+                    rc->_icount += trc->_icount;
+                    rc->_flopcount += trc->_flopcount;
+                    for(int i=0; i<XED_IFORM_LAST; i++) {
+                        if(trc->_instable[i]._execount) {
+                            rc->_instable[i]._execount += trc->_instable[i]._execount;
+                            rc->_instable[i]._cmpcount += trc->_instable[i]._cmpcount;
+                            if(trc->_instable[i]._maskcount) {
+                                rc->_instable[i]._maskcount += trc->_instable[i]._maskcount;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /* ===================================================================== */
 // Analysis routines
 /* ===================================================================== */
 
-// This function is called to do simple increasement (+1)
-VOID PIN_FAST_ANALYSIS_CALL docount(UINT64 * counter, THREADID threadid) {
-    PIN_GetLock(&pinLock, threadid+1); // for output
-    (*counter)++;
+/* Count the number of executed routines in the target image. */
+/* Dynamically allocate memories for every executed routines and conduct necessary initializations. */
+VOID PIN_FAST_ANALYSIS_CALL routine_counter_mt(UINT64 * counter, string *rtn_name, THREADID threadid) {
+    PIN_GetLock(&pinLock, threadid+1);
+    (*counter)++;   // This is global variable, so it needs lock. 
     PIN_ReleaseLock(&pinLock);
-}
 
-// This function is called before every routine is executed
-VOID PIN_FAST_ANALYSIS_CALL routine_counter_mt(string *rtn_name, THREADID threadid) {
+    /* TODO: Bug */
+    /* There is an inaccurate count of instructions */
+    /* when a switch between caller and callee (routines) is happened */
     thread_data_t* tdata = get_tls(threadid);
     RTN_COUNT *rc = new RTN_COUNT;
     rc->_instable = new INS_COUNT[XED_IFORM_LAST];
+    rc->_icount = 0;
+    rc->_flopcount = 0;
+    rc->_name = *rtn_name;
     for (int i=0; i<XED_IFORM_LAST; i++ ) {
         rc->_instable[i]._execount = 0;
         rc->_instable[i]._cmpcount = 0;
     }
-    rc->_name = *rtn_name;
-    rc->_icount = 0;
-    rc->_flopcount = 0;
+    /* For example: main -> multiplyMatrix -> main */
+    /* After the callee "multiplyMatrix" finished and then the routine switches back to "main", */
+    /* the following instructons in "main" will be counted in "multiplyMatrix". */
+    /* These codes is the factor causing this problem. */
     rc->_next = tdata->RtnList;
     tdata->RtnList = rc;
     tdata->RtnList_len += 1;
 }
-// This function is called before every instruction is executed
+
+/* Calculate execution count of an instruction in the current routine of each thread. */
 VOID PIN_FAST_ANALYSIS_CALL instruction_counter_mt(xed_iform_enum_t iform, THREADID threadid) {
     thread_data_t *tdata = get_tls(threadid);
     tdata->RtnList->_instable[iform]._execount++;
 }
 
-// This function is for Masking Instructions -> Need AVX512 instructions for test
+/* TODO: need test with AVX512 Masking instructions */
+/* This function is for Masking Instructions */
 VOID PIN_FAST_ANALYSIS_CALL docount_MaskOP(UINT64 iform, REG reg, const CONTEXT *ctxt, THREADID threadid) {
     thread_data_t* tdata = get_tls(threadid);
     UINT64 value = PIN_GetContextReg(ctxt, reg);
@@ -325,7 +336,8 @@ VOID PIN_FAST_ANALYSIS_CALL docount_MaskOP(UINT64 iform, REG reg, const CONTEXT 
 /* ===================================================================== */
 
 VOID Image(IMG img, VOID *v) {
-    INFOS printf( "[INFOS] Image Name: %s, Target Name: %s, %d\n", StripPath(IMG_Name(img).c_str()), target_image, strcmp(StripPath(IMG_Name(img).c_str()), target_image) );
+    INFOS printf( "[INFOS] Image Name: %s, Target Name: %s, %d\n", 
+        StripPath(IMG_Name(img).c_str()), target_image, strcmp(StripPath(IMG_Name(img).c_str()), target_image) );
     if( strcmp(StripPath(IMG_Name(img).c_str()), target_image) == 0 ) {
         for( SEC sec = IMG_SecHead(img); SEC_Valid(sec); sec = SEC_Next(sec) ) {
             for( RTN rtn= SEC_RtnHead(sec); RTN_Valid(rtn); rtn = RTN_Next(rtn) ) {
@@ -364,13 +376,9 @@ VOID Image(IMG img, VOID *v) {
 
                     RTN_Open(rtn);
 
-                    /* The Total Analysis Result */
-                    RTN_InsertCall(rtn, IPOINT_BEFORE, (AFUNPTR)docount, IARG_FAST_ANALYSIS_CALL, 
-                        IARG_PTR, &(rc->_rtnCount), IARG_THREAD_ID, IARG_END);
-
-                    /* The Multi-Threading Analysis Result */
+                    /* The function - routine_counter_mt - is called before every routine is executed */
                     RTN_InsertCall(rtn, IPOINT_BEFORE, (AFUNPTR)routine_counter_mt, IARG_FAST_ANALYSIS_CALL,
-                        IARG_PTR, &(rc->_name), IARG_THREAD_ID, IARG_END);
+                        IARG_PTR, &(rc->_rtnCount), IARG_PTR, &(rc->_name), IARG_THREAD_ID, IARG_END);
 
                     /* For each instruction of the routine */
                     for ( INS ins = RTN_InsHead(rtn); INS_Valid(ins); ins = INS_Next(ins) ) {
@@ -392,11 +400,11 @@ VOID Image(IMG img, VOID *v) {
                             insAttr[iform]._isMaskOP = XEDD_isMaskOP(xedd);
                         }
 
-                        /* Insert a call to docount to increment the instruction counter for this rtn of each thread */
+                        /* The function - instruction_counter_mt - is called before every instruction is executed */
                         INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)instruction_counter_mt, IARG_FAST_ANALYSIS_CALL, 
                             IARG_UINT64, iform, IARG_THREAD_ID, IARG_END);
 
-                        /* Mask Testing -> Need AVX512 instructions for test */
+                        /* TODO: need test with AVX512 Masking instructions */
                         if( insAttr[iform]._isMaskOP ) {
                             const xed_inst_t* xedi = xedd->_inst;
                             for(int j=0; j<xedi->_noperands; j++) {
@@ -449,10 +457,7 @@ VOID ThreadFini(THREADID threadid, const CONTEXT *ctxt, INT32 code, VOID *v) {
     PIN_ReleaseLock(&pinLock);
 
     thread_data_t* tdata = get_tls(threadid);
-    // *out << tdata << endl;
-    CalculateFLOP(tdata->RtnList);
-
-    // delete tdata;
+    TL_calculateStatistics(tdata->RtnList);
 }
 
 /*!
@@ -464,8 +469,7 @@ VOID ThreadFini(THREADID threadid, const CONTEXT *ctxt, INT32 code, VOID *v) {
  */
 VOID Fini(INT32 code, VOID *v) {
 
-    // CalculateFLOP(RtnList);
-    CalculateTotalFLOP(RtnList, TdList);
+    RL_calculateStatistics(RtnList, TdList);
     
     *out <<  "===============================================" << endl;
     *out <<  "           The Total Analysis Result           " << endl;
@@ -530,7 +534,7 @@ VOID Fini(INT32 code, VOID *v) {
                     }
                     *out << endl; 
                     *out << "    |-> "; 
-                    XEDD_PrintAttribute(insAttr[i]._xedd);
+                    XEDD_printAttribute(insAttr[i]._xedd);
 
                     *out << endl; 
 

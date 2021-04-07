@@ -27,9 +27,9 @@ $ pin -t ./obj-intel64/flop_counter.so -- <Target_Program>
 * [X] Optimization: 
     * Construct global `InsAttr` struct for the basic information of each instruction
     * Modify analysis routines so that they do not record overlapped or useless information
-    * Remove the instrumentation to count the total number of instructions, instead calculate totals based on the statics of each thread
-    * Finally decrease the runtime of instrumented `polybench-c-3.2/2mm_time` from `1426.344537s` to `102.274419s`
-* [ ] Bug: there is inaccurate count of instructions when a switch between caller and callee (routines) is happened
+    * Remove the instrumentation to count the total number of instructions, instead calculate totals based on the statistics of each thread
+    * Finally decrease the runtime of instrumented `polybench-c-3.2/2mm_time` from `1426.344537s` to `98.830370s`
+* [ ] Bug: there is an inaccurate count of instructions when a switch between caller and callee (routines) is happened
 * [ ] Test with AVX512 Masking instructions
 
 ## Sample Result
@@ -345,7 +345,7 @@ This application is instrumented by MyPinTool
 [INFOS] Image Name: [vdso], Target Name: 2mm_time, 41
 * Starting tid 0
 [INFOS] Image Name: libc.so.6, Target Name: 2mm_time, 58
-102.274419
+98.830370
 * Stopping tid 0, code: 0
 ===============================================
            The Total Analysis Result           
