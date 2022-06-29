@@ -1,6 +1,6 @@
 # Pin FLOP Counter
 * This is a [PIN](https://software.intel.com/content/www/us/en/develop/articles/pin-a-dynamic-binary-instrumentation-tool.html) tool. 
-* Measures the **`floating point operations (FLOP)`** in the given program. 
+* Measures **`floating point operations (FLOP)`** for the given program. 
 * The computation is based on the methodology in this article: [Calculating “FLOP” using Intel® Software Development Emulator (Intel® SDE)](https://software.intel.com/content/www/us/en/develop/articles/calculating-flop-using-intel-software-development-emulator-intel-sde.html). 
 
 ## Content
